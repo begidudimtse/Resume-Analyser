@@ -9,7 +9,7 @@ import {
 
 import type { Route } from "./+types/root";
 import "./app.css";
-import { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { usePuterStore } from "./lib/puter";
 
 export const links: Route.LinksFunction = () => [
@@ -26,11 +26,14 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const {init } = usePuterStore();
+  const { init } = usePuterStore();
 
   useEffect(() => {
-    init()
-  }, [init])
+    if (typeof window !== "undefined") {
+      init();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <html lang="en">
