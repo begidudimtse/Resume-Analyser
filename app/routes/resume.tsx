@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react'
 import type { Route } from '../+types/root';
 import { Link, useNavigate, useParams } from 'react-router';
 import { usePuterStore } from '~/lib/puter';
-import Summary from '~/components/Summary';
-import ATS from '~/components/ATS';
-import Details from '~/components/Details';
+import Summary from '~/components/feedback/Summary';
+import ATS from '~/components/feedback/ATS';
+import Details from '~/components/feedback/Details';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -19,37 +19,73 @@ const resume = () => {
   const [imageUrl, setImageURL] = useState('');
   const [resumeUrl, setResumeUrl] = useState('');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [isLoadingResume, setIsLoadingResume] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isLoading && !auth.isAuthenticated) navigate(`/auth?next=/resume/${id}`);
-}, [isLoading])
+    // Only redirect if we're sure auth is not loading and user is not authenticated
+    if (!isLoading && !auth.isAuthenticated && id) {
+      console.log('User not authenticated, redirecting to auth page');
+      navigate(`/auth?next=/resume/${id}`, { replace: true });
+    }
+  }, [isLoading, auth.isAuthenticated, id, navigate])
 
   useEffect(() => {
+    if (!id || isLoading || !auth.isAuthenticated) return;
+
     const loadResume = async () => {
-      const resume = await kv.get(`resume:${id}`)
+      try {
+        setIsLoadingResume(true);
+        console.log('Loading resume with id:', id);
+        
+        // Add a small delay to ensure data is available in KV store
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        const resume = await kv.get(`resume:${id}`);
 
-      if (!resume) return;
+        if (!resume) {
+          console.error('Resume not found for id:', id);
+          setIsLoadingResume(false);
+          return;
+        }
 
-      const data = JSON.parse(resume);
+        const data = JSON.parse(resume);
+        console.log('Resume data loaded:', data);
 
-      const resumeBlob = await fs.read(data.resumePath);
-      if(!resumeBlob) return;
+        const resumeBlob = await fs.read(data.resumePath);
+        if(!resumeBlob) {
+          console.error('Failed to read resume blob');
+          setIsLoadingResume(false);
+          return;
+        }
 
-      const pdfBlob = new Blob([resumeBlob], {type: 'application/pdf'});
-      const resumeUrl = URL.createObjectURL(pdfBlob);
-      setResumeUrl(resumeUrl);
+        const pdfBlob = new Blob([resumeBlob], {type: 'application/pdf'});
+        const resumeUrl = URL.createObjectURL(pdfBlob);
+        setResumeUrl(resumeUrl);
 
-      const imageBlob = await fs.read(data.imagePath);
-      if(!imageBlob) return;
-      const imageUrl = URL.createObjectURL(imageBlob);
-      setImageURL(imageUrl);
+        const imageBlob = await fs.read(data.imagePath);
+        if(!imageBlob) {
+          console.error('Failed to read image blob');
+          setIsLoadingResume(false);
+          return;
+        }
+        
+        const imageUrl = URL.createObjectURL(imageBlob);
+        setImageURL(imageUrl);
 
-      setFeedback(data.feedback);
+        if (data.feedback) {
+          setFeedback(data.feedback);
+        }
+        
+        setIsLoadingResume(false);
+      } catch (error) {
+        console.error('Error loading resume:', error);
+        setIsLoadingResume(false);
+      }
     }
 
     loadResume();
-  }, [id])
+  }, [id, isLoading, auth.isAuthenticated, kv, fs])
 
   return (
     <main className="bg-[url('/images/bg-main.svg')] bg-cover">
@@ -80,7 +116,12 @@ const resume = () => {
 
           <section className="feedback section">
             <h2 className="text-4xl text-black! font-bold">Resume Review</h2>
-            {feedback ? (
+            {isLoadingResume ? (
+              <div className="flex flex-col items-center gap-4">
+                <img src="/images/resume-scan-2.gif" className="w-full" />
+                <p className="text-gray-600">Loading resume data...</p>
+              </div>
+            ) : feedback ? (
               <div className="flex flex-col gap-8 animate-in fade-in duration-1000">
                 <Summary feedback={feedback} />
                 <ATS
@@ -90,7 +131,10 @@ const resume = () => {
                 <Details feedback={feedback} />
               </div>
             ) : (
-              <img src="/images/resume-scan-2.gif" className="w-full" />
+              <div className="flex flex-col items-center gap-4">
+                <img src="/images/resume-scan-2.gif" className="w-full" />
+                <p className="text-gray-600">Waiting for analysis results...</p>
+              </div>
             )}
           </section>
         </div>

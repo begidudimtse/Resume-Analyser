@@ -20,54 +20,115 @@ const upload = () => {
   }
   
   const handleAnalyze = async ({companyName,jobTitle,jobDescription, file} : {companyName : string, jobTitle : string, jobDescription : string , file: File}) => {
-      setIsProcessing(true);
-      setStatusText('Uploading the file...');
-      const uploadFile = await fs.upload([file]);
+      try {
+        console.log('Starting analysis...');
+        setIsProcessing(true);
+        setStatusText('Uploading the file...');
+        const uploadFile = await fs.upload([file]);
 
-      if(!uploadFile) return setStatusText('Error: failed to upload file');
+        if(!uploadFile) {
+          setStatusText('Error: failed to upload file');
+          setIsProcessing(false);
+          return;
+        }
 
-      setStatusText('Converting to image...');
-      const imageFile = await convertPdfToImage(file);
-      if(!imageFile.file) {
-        const errorMsg = imageFile.error || 'Unknown error occurred';
-        return setStatusText(`Error: failed to convert PDF to image - ${errorMsg}`);
+        setStatusText('Converting to image...');
+        const imageFile = await convertPdfToImage(file);
+        if(!imageFile.file) {
+          const errorMsg = imageFile.error || 'Unknown error occurred';
+          setStatusText(`Error: failed to convert PDF to image - ${errorMsg}`);
+          setIsProcessing(false);
+          return;
+        }
+
+        setStatusText("Uploading the image...");
+        const uploadImage = await fs.upload([imageFile.file]);
+        if(!uploadImage) {
+          setStatusText('Error: failed to upload image');
+          setIsProcessing(false);
+          return;
+        }
+
+        setStatusText('Preparing data...');
+
+        const uuid = generateUUID();
+        const data = {
+          id: uuid,
+          resumePath: uploadFile.path,
+          imagePath: uploadImage.path,
+          companyName, jobTitle, jobDescription,
+          feedback: '',
+        }
+
+        await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+        setStatusText('Analyzing...');
+
+        const feedback = await ai.feedback(
+          uploadFile.path,
+          prepareInstructions({jobTitle, jobDescription, AIResponseFormat})
+        )
+        if(!feedback) {
+          setStatusText('Error: failed to analyze resume');
+          setIsProcessing(false);
+          return;
+        }
+        
+        const feedbackText = typeof feedback.message.content === 'string' 
+          ? feedback.message.content
+          : feedback.message.content[0].text;
+
+        try {
+          data.feedback = JSON.parse(feedbackText);
+        } catch (parseError) {
+          console.error('Error parsing feedback JSON:', parseError);
+          setStatusText('Error: failed to parse analysis results');
+          setIsProcessing(false);
+          return;
+        }
+
+        await kv.set(`resume:${uuid}`, JSON.stringify(data));
+        
+        // Verify data was saved
+        const verifyData = await kv.get(`resume:${uuid}`);
+        if (!verifyData) {
+          console.error('Failed to verify data save');
+          setStatusText('Error: failed to save resume data');
+          setIsProcessing(false);
+          return;
+        }
+        
+        // Validate UUID before navigation
+        if (!uuid || typeof uuid !== 'string' || uuid.trim() === '') {
+          console.error('Invalid UUID:', uuid);
+          setStatusText('Error: Invalid resume ID generated');
+          setIsProcessing(false);
+          return;
+        }
+
+        setStatusText('Analysis complete, redirecting...');
+        console.log('Navigating to resume page with id:', uuid);
+        console.log('UUID type:', typeof uuid, 'UUID value:', uuid);
+       
+        // Small delay to ensure data is saved before navigation
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Construct the path - ensure UUID is properly encoded
+        const resumePath = `/resume/${encodeURIComponent(uuid)}`;
+        console.log('Resume path:', resumePath);
+        console.log('Full URL will be:', window.location.origin + resumePath);
+        
+        // Use window.location.href directly for reliable navigation
+        // This ensures the UUID is definitely included in the URL
+        window.location.href = resumePath;
+        
+        // Don't reset isProcessing here - let the navigation handle it
+        // The component will unmount on navigation, so state doesn't matter
+      } catch (error) {
+        console.error('Error during analysis:', error);
+        setStatusText(`Error: ${error instanceof Error ? error.message : 'An unexpected error occurred'}`);
+        setIsProcessing(false);
       }
-
-      setStatusText("Uploading the image...");
-      const uploadImage = await fs.upload([imageFile.file]);
-      if(!uploadImage) return setStatusText('Error: failed to upload image');
-
-      setStatusText('Preparing data...');
-
-      const uuid = generateUUID();
-      const data = {
-        id: uuid,
-        resumePath: uploadFile.path,
-        imagePath: uploadImage.path,
-        companyName, jobTitle, jobDescription,
-        feedback: '',
-      }
-
-      await kv.set(`resume:${uuid}`, JSON.stringify(data));
-
-      setStatusText('Analyzing...');
-
-      const feedback = await ai.feedback(
-        uploadFile.path,
-        prepareInstructions({jobTitle, jobDescription, AIResponseFormat})
-      )
-      if(!feedback) return setStatusText('Error to analyze resume');
-      
-      const feedbackText = typeof feedback.message.content === 'string' 
-        ? feedback.message.content
-        : feedback.message.content[0].text;
-
-      data.feedback = JSON.parse(feedbackText);
-      await kv.set(`resume:${uuid}`, JSON.stringify(data));
-      setStatusText('Analysis complete, redirecting...');
-     
-      navigate(`/resume/${uuid}`);
-      
   }
 
   const handleSubmit = (e : FormEvent<HTMLFormElement>) => {
